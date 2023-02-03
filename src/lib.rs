@@ -5,7 +5,11 @@ use std::sync::{Mutex, MutexGuard};
 
 use cgns_sys::DataType_t::RealDouble;
 use cgns_sys::ZoneType_t::Unstructured;
-use cgns_sys::*;
+use cgns_sys::{
+    cg_array_write, cg_base_write, cg_biter_read, cg_biter_write, cg_close, cg_coord_write,
+    cg_get_error, cg_golist, cg_open, cg_section_read, cg_section_write, cg_ziter_write,
+    cg_zone_write, DataType_t, CG_MODE_MODIFY, CG_MODE_READ, CG_MODE_WRITE,
+};
 
 pub use cgns_sys::ElementType_t;
 pub struct Error(i32);
@@ -32,7 +36,7 @@ impl<'a> GotoContext<'a> {
     ) -> Result<()> {
         let arrayname = CString::new(arrayname).unwrap();
         assert_eq!(
-            dimensions.iter().cloned().reduce(|a, v| a * v).unwrap(),
+            dimensions.iter().copied().reduce(|a, v| a * v).unwrap(),
             data.len() as i32
         );
         let e = unsafe {
@@ -41,7 +45,7 @@ impl<'a> GotoContext<'a> {
                 T::SYS,
                 dimensions.len() as i32,
                 dimensions.as_ptr(),
-                data.as_ptr() as *const c_void,
+                data.as_ptr().cast::<std::ffi::c_void>(),
             )
         };
         if e == 0 {
@@ -97,6 +101,7 @@ pub struct File(i32);
 #[derive(Copy, Clone)]
 pub struct Base(i32);
 impl Base {
+    #[must_use]
     pub fn new(arg: i32) -> Base {
         Base(arg)
     }
@@ -104,34 +109,33 @@ impl Base {
 #[derive(Copy, Clone)]
 pub struct Zone(i32);
 
-pub struct SectionDef<'a> {
-    base: Base,
-    zone: Zone,
-    pub section_name: &'a str,
-    typ: ElementType_t::Type,
-    pub start: isize,
-    end: isize,
-    pub nbndry: i32,
-    elements: &'a [i32],
+fn raw_to_string(buf: &[u8]) -> String {
+    let nulpos = buf.iter().position(|&r| r == 0).unwrap();
+    CStr::from_bytes_with_nul(&buf[0..=nulpos])
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
 }
 
-impl<'a> SectionDef<'a> {
-    pub fn new(
-        base: Base,
-        zone: Zone,
-        typ: ElementType_t::Type,
-        end: isize,
-        elements: &'a [i32],
-    ) -> Self {
+#[derive(Default)]
+pub struct SectionInfo {
+    pub section_name: String,
+    pub typ: ElementType_t::Type,
+    pub start: i32,
+    pub end: i32,
+    pub nbndry: i32,
+}
+
+impl SectionInfo {
+    #[must_use]
+    pub fn new(typ: ElementType_t::Type, end: i32) -> Self {
         Self {
-            base,
-            zone,
-            section_name: "Elem",
+            section_name: "Elem".to_owned(),
             typ,
-            start: 1,
+            start: 0,
             end,
             nbndry: 0,
-            elements,
         }
     }
 }
@@ -162,18 +166,9 @@ impl File {
         let _l = CGNS_MUTEX.lock().unwrap();
         let mut n_steps = 0;
         let mut name = [0_u8; 33];
-        let e =
-            unsafe { cg_biter_read(self.0, base.0, name.as_mut_ptr() as *mut i8, &mut n_steps) };
+        let e = unsafe { cg_biter_read(self.0, base.0, name.as_mut_ptr().cast(), &mut n_steps) };
         if e == 0 {
-            let nulpos = name.iter().position(|&r| r == 0).unwrap();
-            Ok((
-                CStr::from_bytes_with_nul(&name[0..=nulpos])
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                n_steps,
-            ))
+            Ok((raw_to_string(&name), n_steps))
         } else {
             Err(e.into())
         }
@@ -270,7 +265,7 @@ impl File {
                 zone.0,
                 RealDouble,
                 coordname.as_ptr(),
-                coord.as_ptr() as *const c_void,
+                coord.as_ptr().cast::<c_void>(),
                 &mut c,
             )
         };
@@ -281,26 +276,64 @@ impl File {
         }
     }
 
-    pub fn section_write(&mut self, args: SectionDef) -> Result<()> {
+    pub fn section_write(
+        &mut self,
+        base: Base,
+        zone: Zone,
+        args: &SectionInfo,
+        elements: &[i32],
+    ) -> Result<()> {
         let _l = CGNS_MUTEX.lock().unwrap();
-        let section_name = CString::new(args.section_name).unwrap();
+        let section_name = CString::new(args.section_name.clone()).unwrap();
         let mut c = 0;
         let e = unsafe {
             cg_section_write(
                 self.0,
-                args.base.0,
-                args.zone.0,
+                base.0,
+                zone.0,
                 section_name.as_ptr(),
                 args.typ,
-                args.start as i32,
-                args.end as i32,
+                args.start,
+                args.end,
                 args.nbndry,
-                args.elements.as_ptr(),
+                elements.as_ptr(),
                 &mut c,
             )
         };
         if e == 0 {
             Ok(())
+        } else {
+            Err(e.into())
+        }
+    }
+
+    pub fn section_read(
+        &self,
+        base: Base,
+        zone: Zone,
+        section: i32,
+    ) -> Result<(SectionInfo, bool)> {
+        let _l = CGNS_MUTEX.lock().unwrap();
+        let mut info = SectionInfo::default();
+        let mut parent_flag = 0_i32;
+        let mut raw_name = [0_u8; 64];
+        let e = unsafe {
+            cg_section_read(
+                self.0,
+                base.0,
+                zone.0,
+                section,
+                raw_name.as_mut_ptr().cast(),
+                &mut info.typ,
+                &mut info.start,
+                &mut info.end,
+                &mut info.nbndry,
+                &mut parent_flag,
+            )
+        };
+        if e == 0 {
+            info.section_name = raw_to_string(&raw_name);
+            Ok((info, parent_flag != 0))
         } else {
             Err(e.into())
         }
