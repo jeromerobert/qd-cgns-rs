@@ -6,9 +6,10 @@ use std::sync::{Mutex, MutexGuard};
 use cgns_sys::DataType_t::RealDouble;
 use cgns_sys::ZoneType_t::Unstructured;
 use cgns_sys::{
-    cg_array_write, cg_base_write, cg_biter_read, cg_biter_write, cg_close, cg_coord_write,
-    cg_get_error, cg_golist, cg_open, cg_section_read, cg_section_write, cg_ziter_write,
-    cg_zone_write, DataType_t, CG_MODE_MODIFY, CG_MODE_READ, CG_MODE_WRITE,
+    cg_array_write, cg_base_write, cg_biter_read, cg_biter_write, cg_close, cg_coord_info,
+    cg_coord_read, cg_coord_write, cg_elements_read, cg_get_error, cg_golist, cg_open,
+    cg_section_read, cg_section_write, cg_ziter_write, cg_zone_read, cg_zone_write, DataType_t,
+    CG_MODE_MODIFY, CG_MODE_READ, CG_MODE_WRITE,
 };
 
 pub use cgns_sys::ElementType_t;
@@ -276,6 +277,74 @@ impl File {
         }
     }
 
+    pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, Vec<i32>)> {
+        let mut v = Vec::with_capacity(3);
+        let mut buf = [0_u8; 64];
+        let err = unsafe {
+            cg_zone_read(
+                self.0,
+                base.0,
+                zone.0,
+                buf.as_mut_ptr().cast(),
+                v.as_mut_ptr(),
+            )
+        };
+        if err == 0 {
+            Ok((raw_to_string(&buf), v))
+        } else {
+            Err(err.into())
+        }
+    }
+
+    pub fn coord_info(&self, base: Base, zone: Zone, c: i32) -> Result<(DataType_t::Type, String)> {
+        let mut datatype = DataType_t::Integer;
+        let mut raw_name = [0_u8; 64];
+        let err = unsafe {
+            cg_coord_info(
+                self.0,
+                base.0,
+                zone.0,
+                c,
+                &mut datatype,
+                raw_name.as_mut_ptr().cast(),
+            )
+        };
+        if err == 0 {
+            Ok((datatype, raw_to_string(&raw_name)))
+        } else {
+            Err(err.into())
+        }
+    }
+
+    pub fn coord_read(
+        &self,
+        base: Base,
+        zone: Zone,
+        coordname: &str,
+        range_min: i32,
+        range_max: i32,
+        coord_array: &mut [f64],
+    ) -> Result<()> {
+        let p = CString::new(coordname).unwrap();
+        let err = unsafe {
+            cg_coord_read(
+                self.0,
+                base.0,
+                zone.0,
+                p.as_ptr(),
+                RealDouble,
+                &range_min,
+                &range_max,
+                coord_array.as_mut_ptr().cast(),
+            )
+        };
+        if err == 0 {
+            Ok(())
+        } else {
+            Err(err.into())
+        }
+    }
+
     pub fn section_write(
         &mut self,
         base: Base,
@@ -299,6 +368,29 @@ impl File {
                 elements.as_ptr(),
                 &mut c,
             )
+        };
+        if e == 0 {
+            Ok(())
+        } else {
+            Err(e.into())
+        }
+    }
+
+    pub fn elements_read(
+        &self,
+        base: Base,
+        zone: Zone,
+        section: i32,
+        elements: &mut [i32],
+        parent_data: &mut [i32],
+    ) -> Result<()> {
+        let ptr = if parent_data.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            parent_data.as_mut_ptr()
+        };
+        let e = unsafe {
+            cg_elements_read(self.0, base.0, zone.0, section, elements.as_mut_ptr(), ptr)
         };
         if e == 0 {
             Ok(())
