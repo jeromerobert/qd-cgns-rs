@@ -131,8 +131,8 @@ fn raw_to_string(buf: &[u8]) -> String {
 pub struct SectionInfo {
     pub section_name: String,
     pub typ: ElementType_t,
-    pub start: i32,
-    pub end: i32,
+    pub start: cgsize_t,
+    pub end: cgsize_t,
     pub nbndry: i32,
 }
 
@@ -285,8 +285,8 @@ impl File {
         }
     }
 
-    pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, Vec<cgsize_t>)> {
-        let mut v = Vec::with_capacity(9);
+    pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, [cgsize_t; 9])> {
+        let mut r = [0 as cgsize_t; 9];
         let mut buf = [0_u8; 64];
         let err = unsafe {
             cg_zone_read(
@@ -294,11 +294,11 @@ impl File {
                 base.0,
                 zone.0,
                 buf.as_mut_ptr().cast(),
-                v.as_mut_ptr(),
+                r.as_mut_ptr(),
             )
         };
         if err == 0 {
-            Ok((raw_to_string(&buf), v))
+            Ok((raw_to_string(&buf), r))
         } else {
             Err(err.into())
         }
@@ -358,7 +358,7 @@ impl File {
         base: Base,
         zone: Zone,
         args: &SectionInfo,
-        elements: &[i32],
+        elements: &[cgsize_t],
     ) -> Result<()> {
         let _l = CGNS_MUTEX.lock().unwrap();
         let section_name = CString::new(args.section_name.clone()).unwrap();
