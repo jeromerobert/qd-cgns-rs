@@ -3,6 +3,8 @@ use std::ffi::{c_void, CString};
 use std::fmt::Debug;
 use std::sync::{Mutex, MutexGuard};
 
+mod cgns_sys;
+
 use cgns_sys::DataType_t::RealDouble;
 use cgns_sys::ZoneType_t::Unstructured;
 use cgns_sys::{
@@ -23,7 +25,7 @@ pub enum Mode {
 }
 
 pub trait CgnsDataType {
-    const SYS: DataType_t::Type;
+    const SYS: DataType_t;
 }
 
 pub struct GotoContext<'a>(MutexGuard<'a, ()>);
@@ -58,7 +60,7 @@ impl<'a> GotoContext<'a> {
 }
 
 impl CgnsDataType for i32 {
-    const SYS: DataType_t::Type = DataType_t::Integer;
+    const SYS: DataType_t = DataType_t::Integer;
 }
 
 impl From<Mode> for i32 {
@@ -122,7 +124,7 @@ fn raw_to_string(buf: &[u8]) -> String {
 #[derive(Default)]
 pub struct SectionInfo {
     pub section_name: String,
-    pub typ: ElementType_t::Type,
+    pub typ: ElementType_t,
     pub start: i32,
     pub end: i32,
     pub nbndry: i32,
@@ -130,7 +132,7 @@ pub struct SectionInfo {
 
 impl SectionInfo {
     #[must_use]
-    pub fn new(typ: ElementType_t::Type, end: i32) -> Self {
+    pub fn new(typ: ElementType_t, end: i32) -> Self {
         Self {
             section_name: "Elem".to_owned(),
             typ,
@@ -278,7 +280,7 @@ impl File {
     }
 
     pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, Vec<i32>)> {
-        let mut v = Vec::with_capacity(3);
+        let mut v = Vec::with_capacity(9);
         let mut buf = [0_u8; 64];
         let err = unsafe {
             cg_zone_read(
@@ -296,7 +298,7 @@ impl File {
         }
     }
 
-    pub fn coord_info(&self, base: Base, zone: Zone, c: i32) -> Result<(DataType_t::Type, String)> {
+    pub fn coord_info(&self, base: Base, zone: Zone, c: i32) -> Result<(DataType_t, String)> {
         let mut datatype = DataType_t::Integer;
         let mut raw_name = [0_u8; 64];
         let err = unsafe {
