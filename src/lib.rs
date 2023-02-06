@@ -10,8 +10,8 @@ use cgns_sys::ZoneType_t::Unstructured;
 use cgns_sys::{
     cg_array_write, cg_base_write, cg_biter_read, cg_biter_write, cg_close, cg_coord_info,
     cg_coord_read, cg_coord_write, cg_elements_read, cg_get_error, cg_golist, cg_open,
-    cg_section_read, cg_section_write, cg_ziter_write, cg_zone_read, cg_zone_write, DataType_t,
-    CG_MODE_MODIFY, CG_MODE_READ, CG_MODE_WRITE,
+    cg_section_read, cg_section_write, cg_ziter_write, cg_zone_read, cg_zone_write, cgsize_t,
+    DataType_t, CG_MODE_MODIFY, CG_MODE_READ, CG_MODE_WRITE,
 };
 
 pub use cgns_sys::ElementType_t;
@@ -100,9 +100,9 @@ pub fn open(path: &str, mode: Mode) -> Result<File> {
     }
 }
 
-pub struct File(i32);
+pub struct File(std::os::raw::c_int);
 #[derive(Copy, Clone)]
-pub struct Base(i32);
+pub struct Base(std::os::raw::c_int);
 impl Base {
     #[must_use]
     pub fn new(arg: i32) -> Base {
@@ -110,7 +110,13 @@ impl Base {
     }
 }
 #[derive(Copy, Clone)]
-pub struct Zone(i32);
+pub struct Zone(std::os::raw::c_int);
+impl Zone {
+    #[must_use]
+    pub fn new(arg: i32) -> Zone {
+        Zone(arg)
+    }
+}
 
 fn raw_to_string(buf: &[u8]) -> String {
     let nulpos = buf.iter().position(|&r| r == 0).unwrap();
@@ -225,9 +231,9 @@ impl File {
         &mut self,
         base: Base,
         zonename: &str,
-        vertex_size: i32,
-        cell_size: i32,
-        boundary_size: i32,
+        vertex_size: cgsize_t,
+        cell_size: cgsize_t,
+        boundary_size: cgsize_t,
     ) -> Result<Zone> {
         let _l = CGNS_MUTEX.lock().unwrap();
         let zonename = CString::new(zonename).unwrap();
@@ -279,7 +285,7 @@ impl File {
         }
     }
 
-    pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, Vec<i32>)> {
+    pub fn zone_read(&self, base: Base, zone: Zone) -> Result<(String, Vec<cgsize_t>)> {
         let mut v = Vec::with_capacity(9);
         let mut buf = [0_u8; 64];
         let err = unsafe {
